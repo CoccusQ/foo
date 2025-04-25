@@ -1,0 +1,7 @@
+// fib.foo
+var a // 旧项
+var b // 新项
+var n // 打印n以内的值
+: fib n ! 0 a ! 1 b ! begin a @ b @ + dup . b @ a ! dup b ! n @ > until ; // 斐波那契函数
+100 fib // 执行函数,打印100以内的斐波那契数
+bye // 一定要加上，要不然会出现缓冲区问题，可能导致无法输出

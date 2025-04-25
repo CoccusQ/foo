@@ -1,0 +1,7 @@
+// log2.foo
+var n // 函数参数
+var i // 计数器，存储结果
+: _log2 n @ 0 > if n @ 2 / n ! i ++ _log2 then ; // 递归求对数
+: log2 n ! 0 i ! _log2 i @ 1 - dup . ; // 启动函数
+10 log2 // 求解log_2(10)
+bye // 刷新缓冲区，终止程序
