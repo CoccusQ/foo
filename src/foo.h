@@ -17,15 +17,18 @@
 #define F_MAX_STACK 65536
 #define F_MAX_LOOP 64
 #define F_MAX_WORD 64
-#define F_MAX_EXPR 256
+#define F_MAX_EXPR 512
 #define F_MAX_DICT 512
 #define F_MAX_VARS 512
 
 #define F_MSG "Foo, Copyright (C) 2025 CoccusQ.\nInteractive Mode.\nType `bye` to exit"
 
 typedef enum F_Type {
-    F_PRIMITIVE, F_CONTROL,
-    F_FUNCTION, F_VARIABLE
+    F_PRIMITIVE,
+    F_CONTROL,
+    F_FUNCTION,
+    F_VARIABLE,
+    F_MODULE
 } F_Type;
 
 typedef struct F_State F_State;
@@ -104,6 +107,110 @@ F_DictEntry *F_find(F_State *state, const char *word) {
     return NULL;
 }
 
+void F_printDict(F_State *state) {
+    F_Dict *dict = state->dict;
+    for (int i = 0; i < dict->size; i++) {
+        switch (dict->entry[i].type) {
+            case F_PRIMITIVE:
+                printf("<PRIMITIVE>: %s\n", dict->entry[i].word);
+                break;
+            case F_CONTROL:
+                printf("<PRIMITIVE>: %s\n", dict->entry[i].word);
+                break;
+            case F_FUNCTION:
+                printf("<FUNCTION>: %s\n\t%s\n;\n", dict->entry[i].word, dict->entry[i].expr);
+                break;
+            case F_VARIABLE:
+                printf("<VARIABLE>: %s Address[%d]\n", dict->entry[i].word, dict->entry[i].var_index);
+                break;
+            case F_MODULE:
+                printf("<MODULE>: %s\n", dict->entry[i].word);
+                break;
+        }
+    }
+} 
+
+void F_printPrim(F_State *state) {
+    F_Dict *dict = state->dict;
+    int cnt = 0;
+    for (int i = 0; i < dict->size; i++) {
+        switch (dict->entry[i].type) {
+            case F_PRIMITIVE:
+                printf("%s\t\t", dict->entry[i].word);
+                cnt++;
+                break;
+            case F_CONTROL:
+                printf("%s\t\t", dict->entry[i].word);
+                cnt++;
+                break;
+            default:
+                break;
+        }
+        if (cnt % 5 == 0) putchar('\n');
+    }
+    putchar('\n');
+} 
+
+void F_printFunc(F_State *state) {
+    F_Dict *dict = state->dict;
+    for (int i = 0; i < dict->size; i++) {
+        switch (dict->entry[i].type) {
+            case F_FUNCTION:
+                printf(": %s\n\t%s\n;\n", dict->entry[i].word, dict->entry[i].expr);
+                break;
+            default:
+                break;
+        }
+    }
+} 
+
+void F_printMod(F_State *state) {
+    F_Dict *dict = state->dict;
+    int cnt = 0;
+    for (int i = 0; i < dict->size; i++) {
+        switch (dict->entry[i].type) {
+            case F_MODULE:
+                printf("#%d\t%s\n", cnt, dict->entry[i].word);
+                cnt++;
+                break;
+            default:
+                break;
+        }
+    }
+} 
+
+void F_printVar(F_State *state) {
+    F_Dict *dict = state->dict;
+    for (int i = 0; i < dict->size; i++) {
+        switch (dict->entry[i].type) {
+            case F_VARIABLE:
+                printf("[%d]\t%s\n", dict->entry[i].var_index, dict->entry[i].word);
+                break;
+            default:
+                break;
+        }
+    }
+} 
+
+void F_show(F_State *state, const char *s, int *pos) {
+    int i = *pos, word_idx = 0;
+    while (s[i] == ' ') i++;
+    while (s[i] != ' ' && s[i] != '\0') state->word_buf[word_idx++] = s[i++];
+    state->word_buf[word_idx] = '\0';
+    *pos = i;
+    if (!strcmp(state->word_buf, "*")) F_printDict(state);
+    else if (!strcmp(state->word_buf, "*p")) F_printPrim(state);
+    else if (!strcmp(state->word_buf, "*f")) F_printFunc(state);
+    else if (!strcmp(state->word_buf, "*m")) F_printMod(state);
+    else if (!strcmp(state->word_buf, "*v")) F_printVar(state);
+    else {
+        F_DictEntry *cur = F_find(state, state->word_buf);
+        if (cur && cur->type == F_FUNCTION) {
+            printf(": %s\n\t%s\n;\n", state->word_buf, cur->expr);
+        }
+    }
+}
+
 void F_addExpr(F_State *state, const char *word, const char *expr) {
     F_DictEntry *cur = F_find(state, word);
     F_Dict *dict = state->dict;
@@ -164,14 +271,13 @@ void F_faddVar(F_State *state, const char *word, double val) {
     dict->fvars[cur->var_index] = val;
 }
 
-void F_addMod(F_State *state, const char *word, int val) {
+void F_addMod(F_State *state, const char *word, int flag) {
     F_Dict *dict = state->dict;
-    F_DictEntry *cur = &dict->entry[dict->size];
+    F_DictEntry *cur = &dict->entry[dict->size++];
     strcpy(cur->word, word);
     cur->var_index = dict->var_size++;
-    dict->vars[cur->var_index] = val;
-    cur->type = F_VARIABLE;
-    dict->size++;
+    cur->type = F_MODULE;
+    dict->vars[cur->var_index] = flag;
 }
 
 F_Stack *F_createStack(int capacity) {
@@ -351,30 +457,32 @@ void F_parseNum(F_State *state, const char *str, int *pos) {
         F_fpush(state, (x + fractional) * f);
     }
 }
-
 void F_parseChar(F_State *state, const char *str, int *pos) {
     if (!state->running) return;
     (*pos)++;
-    int c = (int) str[(*pos)++];
-    if (str[*pos] != '\'') {
-        fprintf(stderr, "[ERROR] Invalid input at line %d\n", state->line_count);
+    if (str[*pos] == '\0') {
+        fprintf(stderr, "[ERROR] Unterminated character literal at line %d\n", state->line_count);
         if (!state->interactive) state->running = 0;
         return;
-    } else F_push(state, c);
-    while (str[*pos] != ' ' && str[*pos] != '\n' && str[*pos] != '\r' && str[*pos] != '\\') (*pos)++;
+    }
+    int c = (int)str[(*pos)++];
+    if (str[*pos] != '\'') {
+        fprintf(stderr, "[ERROR] Expected closing quote at line %d\n", state->line_count);
+        if (!state->interactive) state->running = 0;
+        return;
+    }
+    (*pos)++;
+    F_push(state, c);
+    while (str[*pos] == ' ') (*pos)++;
 }
 
 void F_parseString(F_State *state, const char *str, int *pos) {
     if (!state->running) return;
     (*pos)++;
-    int idx = 0;
     while (str[*pos] != '"' && str[*pos] != '\0') {
-        state->word_buf[idx++] = str[(*pos)++];
+        F_push(state, str[(*pos)++]);
     }
-    state->word_buf[idx] = '\0';
-    for (int i = idx; i >= 0; i--) {
-        F_push(state, state->word_buf[i]);
-    }
+    F_push(state, '\0');
     (*pos)++;
 }
 
@@ -387,6 +495,9 @@ void F_parseWord(F_State *state, const char *str, int *pos) {
     for (int i = 0; i < state->dict->size; i++) {
         if (!strcmp(state->word_buf, state->dict->entry[i].word)) {
             switch (state->dict->entry[i].type) {
+                case F_MODULE:
+                    F_push(state, state->dict->entry[i].var_index);
+                    break;
                 case F_VARIABLE:
                     F_push(state, state->dict->entry[i].var_index);
                     break;
@@ -400,6 +511,8 @@ void F_parseWord(F_State *state, const char *str, int *pos) {
                 case F_CONTROL:
                     if (state->dict->entry[i].control)
                         state->dict->entry[i].control(state, str, pos);
+                    break;
+                default:
                     break;
             }
             return;
@@ -469,17 +582,18 @@ void F_import(F_State *state, char *s) {
     while (s[i] != ' ' && s[i] != '\0') 
         filename[word_idx++] = s[i++];
     filename[word_idx] = '\0';
+    strcat(filename, ".foo");
     if (F_find(state, filename)) {
         state->line_count = saved_line_count;
         state->interactive = saved_interactive;
+        if (state->interactive)
+            fprintf(stdout, "[INFO] Already load module `%s` before\n", filename);
         return;
     }
     F_addMod(state, filename, 1);
-    strcat(filename, ".foo");
     FILE *fm = fopen(filename, "r");
     if (!fm) {
-        fprintf(stderr, "[ERROR] Failed to load module `%s`: %s\n", 
-                filename, strerror(errno));
+        fprintf(stderr, "[ERROR] Failed to load module `%s`: %s\n", filename, strerror(errno));
         if (!saved_interactive) state->running = 0;
         state->line_count = saved_line_count;
         state->interactive = saved_interactive;
@@ -898,6 +1012,18 @@ void F_sub_store(F_State *state) {
     state->dict->vars[var_idx] -= x;
 }
 
+void F_mul_store(F_State *state) {
+    int var_idx = F_pop(state);
+    int x = F_pop(state);
+    state->dict->vars[var_idx] *= x;
+}
+
+void F_div_store(F_State *state) {
+    int var_idx = F_pop(state);
+    int x = F_pop(state);
+    state->dict->vars[var_idx] /= x;
+}
+
 void F_fvar(F_State *state, const char *s, int *pos) {
     if (state->dict->fvar_size >= F_MAX_VARS) {
         fprintf(stderr, "[ERROR] Variable limit reached at line %d\n", state->line_count);
@@ -940,6 +1066,18 @@ void F_fsub_store(F_State *state) {
     state->dict->fvars[var_idx] -= x;
 }
 
+void F_fmul_store(F_State *state) {
+    int var_idx = F_pop(state);
+    double x = F_fpop(state);
+    state->dict->fvars[var_idx] *= x;
+}
+
+void F_fdiv_store(F_State *state) {
+    int var_idx = F_pop(state);
+    double x = F_fpop(state);
+    state->dict->fvars[var_idx] /= x;
+}
+
 void F_ftoi(F_State *state) {
     double value = F_fpop(state);
     F_push(state, (int)value);
@@ -952,6 +1090,7 @@ void F_itof(F_State *state) {
 
 void F_emit(F_State *state) {
     putchar(F_pop(state));
+    if (state->interactive) putchar('\n');
 }
 
 void F_cr(F_State *state) {
@@ -966,19 +1105,19 @@ void F_tab(F_State *state) {
     F_push(state, '\t');
 }
 
-void F_getint(F_State *state) {
+void F_geti(F_State *state) {
     int value;
     scanf("%d", &value);
     F_push(state, value);
 }
 
-void F_getfloat(F_State *state) {
+void F_getf(F_State *state) {
     double value;
     scanf("%lf", &value);
     F_fpush(state, value);
 }
 
-void F_getchar(F_State *state) {
+void F_getc(F_State *state) {
     int c = getchar();
     F_push(state, c);
 }
@@ -1076,14 +1215,17 @@ void F_initState(F_State *state) {
     F_addFunc(state, "--", F_decrease);
     F_addFunc(state, "+!", F_add_store);
     F_addFunc(state, "-!", F_sub_store);
+    F_addFunc(state, "*!", F_mul_store);
+    F_addFunc(state, "/!", F_div_store);
 
     F_addFunc(state, "emit", F_emit);
     F_addFunc(state, "<cr>", F_cr);
     F_addFunc(state, "<space>", F_space);
     F_addFunc(state, "<tab>", F_tab);
-    F_addFunc(state, "getint", F_getint);
-    F_addFunc(state, "getfloat", F_getfloat);
-    F_addFunc(state, "getchar", F_getchar);
+    F_addFunc(state, "geti", F_geti);
+    F_addFunc(state, "getf", F_getf);
+    F_addFunc(state, "getc", F_getc);
+    F_addControl(state, "show", F_show);
     F_addFunc(state, "bye", F_bye);
     
     F_addFunc(state, "f+", F_fadd);
@@ -1114,6 +1256,8 @@ void F_initState(F_State *state) {
     F_addFunc(state, "f?", F_fquery);
     F_addFunc(state, "f+!", F_fadd_store);
     F_addFunc(state, "f-!", F_fsub_store);
+    F_addFunc(state, "f*!", F_fmul_store);
+    F_addFunc(state, "f/!", F_fdiv_store);
     
     F_addFunc(state, "f2i", F_ftoi);
     F_addFunc(state, "i2f", F_itof);
